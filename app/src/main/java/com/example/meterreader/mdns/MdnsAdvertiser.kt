@@ -2,6 +2,7 @@ package com.example.meterreader.mdns
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -56,10 +57,14 @@ class MdnsAdvertiser(
     private val logTag: String = "MdnsAdvertiser",
     private val reannounceSec: Long = 100,   // 定期再告知の間隔(秒)。0で無効。AndroidのmDNSは応答が不安定なため、
                                              // TTL(約120s)切れ前に再告知してクライアントのキャッシュを温め続ける
+    private val holdWifiLock: Boolean = false,   // true で WifiLock を確保し Wi-Fi 省電力(PSM)を無効化。
+                                                 // 省電力中のマルチキャスト取りこぼし＝mDNS応答失敗を減らす狙い。
+                                                 // 無線を寝かせないため**電池消費は増える**（据置運用向け）。
     private val onRegistered: (String) -> Unit = {},
 ) {
     private val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var lock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     @Volatile private var jmdns: JmDNS? = null
     private val exec = Executors.newSingleThreadExecutor()
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
@@ -79,10 +84,14 @@ class MdnsAdvertiser(
     /** ネットワーク変更・ホスト名変更時に呼ぶ（作り直して再登録）。 */
     fun reregister() { exec.execute { register() } }
 
-    /** 広告を停止し、MulticastLock/スレッドを解放する。 */
+    /** 広告を停止し、MulticastLock/WifiLock/スレッドを解放する。 */
     fun stop() {
         runCatching { scheduler.shutdownNow() }
-        exec.execute { teardown(); runCatching { lock?.release() }; lock = null }
+        exec.execute {
+            teardown()
+            runCatching { lock?.release() }; lock = null
+            runCatching { wifiLock?.release() }; wifiLock = null
+        }
         exec.shutdown()
     }
 
@@ -94,6 +103,17 @@ class MdnsAdvertiser(
             val addr = siteLocalIpv4() ?: run { Log.w(logTag, "mDNS: no site-local IPv4; skip"); return }
             if (lock == null) {
                 lock = wifi.createMulticastLock("$logTag-mdns").apply { setReferenceCounted(true); acquire() }
+            }
+            if (holdWifiLock && wifiLock == null) {
+                // API27 は HIGH_PERF（省電力無効化）。API29+ はより新しい LOW_LATENCY を使う。
+                // 取得は WAKE_LOCK 権限が必要。失敗しても mDNS 登録は続行できるよう隔離する。
+                runCatching {
+                    @Suppress("DEPRECATION")
+                    val type = if (Build.VERSION.SDK_INT >= 29)
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY else WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    wifiLock = wifi.createWifiLock(type, "$logTag-wifi").apply { setReferenceCounted(false); acquire() }
+                    Log.i(logTag, "WifiLock acquired (type=$type) to keep Wi-Fi awake for mDNS RX")
+                }.onFailure { Log.w(logTag, "WifiLock acquire failed (continuing without it): ${it.message}") }
             }
             val j = JmDNS.create(addr, label)
             val info = if (txt.isEmpty())

@@ -121,6 +121,7 @@ class MainActivity : AppCompatActivity() {
             serviceName = { "Meter Reader" },         // DNS-SD ブラウザ表示名
             txt = mapOf("path" to "/"),
             logTag = TAG,
+            holdWifiLock = true,   // Wi-Fi省電力を無効化しmDNS応答の取りこぼしを抑える（据置給電運用前提）
             onRegistered = { name -> onMdnsRegistered(name) },
         )
     }

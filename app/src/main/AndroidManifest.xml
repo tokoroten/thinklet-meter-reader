@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />   <!-- オフライン判定（接続復帰でキュー処理） -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />   <!-- mDNS（jmDNS）のマルチキャスト受信 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />   <!-- WifiLock 取得（Wi-Fi省電力を無効化しmDNS応答の取りこぼしを抑制） -->
     <!-- デバッグ用: adb push した任意パスの画像を読むため（DEBUG_READ で path を明示指定する時）。
          既定の getExternalFilesDir(アプリ専用領域)だけなら不要だが、/sdcard 直下指定も使えるよう付与。 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
