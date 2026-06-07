@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />   <!-- オフライン判定（接続復帰でキュー処理） -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />   <!-- mDNS（jmDNS）のマルチキャスト受信 -->
+    <!-- デバッグ用: adb push した任意パスの画像を読むため（DEBUG_READ で path を明示指定する時）。
+         既定の getExternalFilesDir(アプリ専用領域)だけなら不要だが、/sdcard 直下指定も使えるよう付与。 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.MeterReader">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

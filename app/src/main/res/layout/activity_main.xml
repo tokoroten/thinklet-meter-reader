@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#111111">
+
+    <!-- ① 上: カメラLIVE（照準合わせ用。横画像を fitCenter で全体表示） -->
+    <ImageView
+        android:id="@+id/preview"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scaleType="fitCenter"
+        android:background="#000000"
+        android:contentDescription="preview" />
+
+    <!-- 区切りラベル -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#222222"
+        android:textColor="#AAAAAA"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="4dp"
+        android:textSize="12sp"
+        android:text="直近の撮影画像" />
+
+    <!-- ② 中: 直近に撮影してOpenAIへ送った画像 -->
+    <ImageView
+        android:id="@+id/shot"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:scaleType="fitCenter"
+        android:background="#000000"
+        android:contentDescription="shot" />
+
+    <!-- ③ 下: 読み取り結果 -->
+    <TextView
+        android:id="@+id/text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#000000"
+        android:textColor="#FFFFFF"
+        android:padding="12dp"
+        android:textSize="22sp"
+        android:text="Meter Reader — 音量Downでメータを撮影" />
+
+</LinearLayout>

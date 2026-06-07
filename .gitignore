@@ -1,0 +1,20 @@
+# Android / Gradle
+*.iml
+.gradle/
+**/build/
+/captures
+.externalNativeBuild
+.cxx/
+*.apk
+*.aab
+
+# Local config（SDK パス・秘匿情報を含むためコミットしない）
+local.properties
+
+# IDE
+.idea/
+*.hprof
+
+# OS
+.DS_Store
+Thumbs.db
