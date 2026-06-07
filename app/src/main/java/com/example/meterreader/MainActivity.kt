@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         httpUrl = httpServer.urls().firstOrNull { !it.startsWith("http://localhost") }
             ?: "http://localhost:$HTTP_PORT (USB: adb forward)"
         Log.i(TAG, "HTTP: ${httpServer.urls().joinToString("  /  ")}")
-        ui("Meter Reader 起動。設定→ $httpUrl/config  (音量Downで撮影)")
+        ui(accessText("Meter Reader 起動（音量Down=撮影 / 各URL+/config で設定）"))
 
         tts = TextToSpeech(this, { st ->
             ttsReady = (st == TextToSpeech.SUCCESS)
@@ -281,7 +281,7 @@ class MainActivity : AppCompatActivity() {
         httpServer.setMdnsName(name)
         httpUrl = "http://$name" + if (HTTP_PORT == 80) "" else ":$HTTP_PORT"
         Log.i(TAG, "mDNS: $httpUrl")
-        runOnUiThread { ui("アクセス先: $httpUrl") }
+        runOnUiThread { ui(accessText()) }
     }
 
     /** 音量Up 2回以上: アクセス先を音声・画面で案内。mDNS名のみ（無い時だけIPにフォールバック）。 */
@@ -298,7 +298,7 @@ class MainActivity : AppCompatActivity() {
             else -> "ネットワーク未接続"
         }
         Log.i(TAG, "speakAccessUrl (vol-up multi-tap): $shown")
-        runOnUiThread { ui("アクセス先: $shown") }
+        runOnUiThread { ui(accessText()) }
         val portSpoken = if (HTTP_PORT == 80) "" else "。ポート ${HTTP_PORT}"
         val spoken = when {
             name.isNotBlank() -> "アクセス先。${spellHost(name)}$portSpoken"
@@ -309,6 +309,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** "m0427.local" → 「エム、ゼロ、ヨン、ニ、ナナ、ドット、ローカル」（数値ではなく桁で読む）。 */
+    /** 現在の IP ベースの URL（非localhost）。無ければ null。 */
+    private fun ipUrl(): String? =
+        httpServer.urls().firstOrNull { !it.startsWith("http://localhost") }
+
+    /** 現在の mDNS URL（`<name>.local`）。未登録なら null。 */
+    private fun mdnsUrl(): String? {
+        val n = mdns.committedName
+        return if (n.isBlank()) null
+        else "http://$n" + if (HTTP_PORT == 80) "" else ":$HTTP_PORT"
+    }
+
+    /** 画面HUD用「アクセス先」: mDNS と IP を両方（取得できた分だけ）併記する。 */
+    private fun accessText(head: String = "アクセス先"): String = buildString {
+        append(head)
+        val md = mdnsUrl(); val ip = ipUrl()
+        if (md != null) append("\n mDNS: $md")
+        if (ip != null) append("\n IP:   $ip")
+        if (md == null && ip == null) append("\n （ネットワーク未接続）")
+    }
+
     private fun spellHost(host: String): String {
         val label = host.substringBefore(".")
         val body = label.map { c -> if (c in '0'..'9') DIGITS_JA[c - '0'] else if (c == 'm' || c == 'M') "エム" else c.toString() }
