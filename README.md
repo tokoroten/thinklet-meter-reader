@@ -166,7 +166,7 @@ WiFi/LTE 未接続時は OpenAI を呼ばず、撮影画像を**キューに保�
 
 - **症状の正体は「ネガティブキャッシュ」**：正引き成功の保持はむしろ長い（jmDNS の A レコード TTL=3600秒）。問題は、ある時の問い合わせが間に合わないと Windows が**「存在しない」という失敗を記憶して再問い合わせをやめる**こと。端末は応答しているのに Windows だけ `could not be resolved` を返し続ける（＝「一度こけると戻らない」体感の正体）。
 - **即復旧**：`ipconfig /flushdns` でネガティブキャッシュを消すと直後から解決可（その後しばらく＝最長TTL～1時間OK）。
-- **恒久対策**：Windows に **Apple Bonjour（mDNSResponder）** を導入すると、再問い合わせを適切に行いネガティブキャッシュに陥りにくく、Chrome/Edge から `.local` が安定解決できる。
+- **恒久対策（Windows・推奨）**：**Apple Bonjour（mDNSResponder）** を導入すると、再問い合わせを適切に行いネガティブキャッシュに陥りにくく、`ping` / `Resolve-DnsName` / Chrome・Edge から `<name>.local` が**安定解決**できる（実機で `meter.local` の連続解決を確認）。インストール手順は [Windows への Bonjour 導入ガイド](https://hiragram.github.io/koigao-website/windows_setup_bonjour.html) を参照。導入後は `Bonjour サービス` が常駐し `dns-sd` も使えるようになる。
 - **代替**：端末と**同じ Wi-Fi** の スマホ/Mac（正規mDNS実装）からアクセス、または **IP直 `http://<ip>:8080/`（常に確実）**。IPは音量Up連打の読み上げ・画面ヘッダ・`/state.json` で確認可。
 - 診断スクリプト（参考, リポジトリ外）：`zeroconf` で `_http._tcp.local.` を browse すれば、端末が応答しているか（＝原因がクライアント側か）を切り分けられる。
 
