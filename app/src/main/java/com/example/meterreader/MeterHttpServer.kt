@@ -333,7 +333,7 @@ class MeterHttpServer(
     }
 
     private fun recordsCsv(): String {
-        val sb = StringBuilder("ts,time,value_text,value,unit,meter_type,display_type,confidence,ok,notes,source,codes\n")
+        val sb = StringBuilder("ts,datetime,value_text,value,unit,meter_type,display_type,confidence,ok,notes,source,codes\n")
         for (r in records) {
             sb.append(r.ts).append(',').append(csv(fmtTs(r.ts))).append(',')
               .append(csv(r.valueText)).append(',').append(r.value?.toString() ?: "").append(',')
@@ -348,7 +348,7 @@ class MeterHttpServer(
         if (s.any { it == ',' || it == '"' || it == '\n' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
 
     private fun fmtTs(ts: Long): String =
-        runCatching { SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date(ts)) }.getOrDefault("")
+        runCatching { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(ts)) }.getOrDefault("")
 
     private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;")
         .replace(">", "&gt;").replace("\"", "&quot;")
@@ -533,13 +533,13 @@ function save(){
    <div class="val" id="val">&mdash;</div><div class="meta" id="vmeta"></div></div>
  <div class="card log"><div class="h">直近の読み取り <span class="meta" id="hcnt"></span>
    <a class="btn" href="/history" style="float:right">すべての履歴 →</a></div>
-   <table><thead><tr><th>#</th><th>time</th><th>value</th><th>unit</th><th>type</th><th>conf</th></tr></thead>
+   <table><thead><tr><th>#</th><th>日時</th><th>value</th><th>unit</th><th>type</th><th>conf</th></tr></thead>
    <tbody id="rows"></tbody></table>
    <div class="empty" id="empty">まだ読み取りがありません（端末の音量Downで撮影）</div></div>
 </div>
 <script>
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
-function ftime(ts){try{return new Date(ts).toLocaleTimeString();}catch(e){return '';}}
+function ftime(ts){try{return new Date(ts).toLocaleString();}catch(e){return '';}}
 function fconf(c){return (c==null)?'':Math.round(c*100)+'%';}
 function tick(){
  document.getElementById('prev').src='/preview.jpg?t='+Date.now();
