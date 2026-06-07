@@ -156,8 +156,19 @@ WiFi/LTE 未接続時は OpenAI を呼ばず、撮影画像を**キューに保�
 - **既定名は端末固有の `meter-XXXX`**（初回起動で乱数決定→暗号化ストアに永続化, 再起動でも不変）。**/config の「デバイス名」で任意名に変更可**（例 `meter` / `truck3` / `bldgA`。英小文字・数字・ハイフンに自動正規化）。
 - **衝突回避は「一意な既定名」で担保**：本機(Android 8.1)では **jmDNS のマルチキャスト受信が不安定で、同名衝突時の自動リネーム(-2)が不確実**（実機で確認）。そのため**最初から重複しない既定名**にしている。**複数台で手動で同名に揃えると衝突する**ので、各端末は別名にすること（単一台なら `meter` 等の短名でOK）。
 - 名前は **読み取り画面ヘッダ・`/state.json`(`config.mdns`)・logcat** に表示。**音量Up ダブルタップ**で mDNS名（無ければIP）＋ポートを**音声案内**＋画面表示（1回押しは直前値の再読み上げ）。
-- `.local` 解決対応：macOS/iOS=◎, Windows10+=○, Android/一部Linux=△。クライアント直後の初回問い合わせはキャッシュ未生成で数百ms〜数秒かかることがある。
+- `.local` 解決対応：macOS/iOS=◎, Android=○, **Windows10/11=△（内蔵リゾルバが不安定。下記トラブルシュート参照）**, 一部Linux=△。
+- **WifiLock（既定で有効）**：起動時に `WIFI_MODE_FULL_HIGH_PERF`（API27）/`FULL_LOW_LATENCY`（API29+）の WifiLock を確保し、**Wi-Fi 省電力(PSM)中のマルチキャスト取りこぼし＝mDNS応答失敗を抑える**。無線を寝かせない分**電池消費は増える**ため、据置給電運用向け。無効化は `MdnsAdvertiser(holdWifiLock=false)`。取得には `WAKE_LOCK` 権限が必要（本機では必須。無いと `SecurityException`）。
 - 無線adbと併用すると `adb connect <name>.local:5555` 等もIP非依存に。THINKLETは `ro.adb.secure=0` で無線adbの認証ダイアログが出ず、ヘッドレス運用と相性が良い。
+
+### トラブルシュート：Windows で `<name>.local` が引けない
+
+実機切り分けの結論：**端末側は mDNS に正しく応答している**（同一PC・同時刻に正規mDNSクライアント＝Python `zeroconf` では `meter.local → 192.168.0.107:8080` を解決成功）。引けない原因は **Windows 内蔵 `.local` リゾルバの弱さ**で、特に**有線PC↔無線端末をまたぐマルチキャスト配送が間欠的**な環境で顕著。
+
+- **症状の正体は「ネガティブキャッシュ」**：正引き成功の保持はむしろ長い（jmDNS の A レコード TTL=3600秒）。問題は、ある時の問い合わせが間に合わないと Windows が**「存在しない」という失敗を記憶して再問い合わせをやめる**こと。端末は応答しているのに Windows だけ `could not be resolved` を返し続ける（＝「一度こけると戻らない」体感の正体）。
+- **即復旧**：`ipconfig /flushdns` でネガティブキャッシュを消すと直後から解決可（その後しばらく＝最長TTL～1時間OK）。
+- **恒久対策**：Windows に **Apple Bonjour（mDNSResponder）** を導入すると、再問い合わせを適切に行いネガティブキャッシュに陥りにくく、Chrome/Edge から `.local` が安定解決できる。
+- **代替**：端末と**同じ Wi-Fi** の スマホ/Mac（正規mDNS実装）からアクセス、または **IP直 `http://<ip>:8080/`（常に確実）**。IPは音量Up連打の読み上げ・画面ヘッダ・`/state.json` で確認可。
+- 診断スクリプト（参考, リポジトリ外）：`zeroconf` で `_http._tcp.local.` を browse すれば、端末が応答しているか（＝原因がクライアント側か）を切り分けられる。
 
 ## APIキーの保存（セキュリティ）
 
@@ -171,7 +182,7 @@ WiFi/LTE 未接続時は OpenAI を呼ばず、撮影画像を**キューに保�
 - 端末: THINKLET LC01（Android 8.1 / API 27, arm64-v8a, GMSなし, 広角カメラ）
 - ツールチェイン: AGP 8.10 / Kotlin 2.1 / compileSdk 36 / minSdk 27 / Gradle 8.13 / JDK 17(JBR)
 - 依存: CameraX / **ML Kit barcode-scanning**（端末内バンドル＝GMS非依存, ID読取）/ **androidx.security-crypto**（キー暗号化）/ **jmDNS**（mDNS, 純Java）。ネットは `HttpURLConnection`、JSONは `org.json`＝**追加ネットライブラリなし**。OpenCVは不使用。APKは約16MB（大半はML Kitバーコードモデル）。
-- 権限: `CAMERA` / `INTERNET` / `ACCESS_NETWORK_STATE`（接続判定）/ `CHANGE_WIFI_MULTICAST_STATE`（mDNS）/ `READ_EXTERNAL_STORAGE`（debug の任意パス画像読込, maxSdk32）。
+- 権限: `CAMERA` / `INTERNET` / `ACCESS_NETWORK_STATE`（接続判定）/ `CHANGE_WIFI_MULTICAST_STATE`（mDNS）/ `WAKE_LOCK`（mDNS応答安定化のWifiLock）/ `READ_EXTERNAL_STORAGE`（debug の任意パス画像読込, maxSdk32）。
 - TTS: Fairy **Josee**（`ai.fd.josee.app.tts`, オフライン日英）。未導入時は無音で動作継続（導入は [FairyDevicesRD/droid.josee.tts](https://github.com/FairyDevicesRD/droid.josee.tts) 参照）。
 - カメラは ImageAnalysis のみbind（連続フレームをプレビュー＋撮影元に使用）。露出は自動（ブレ抑制の上限露光固定）／設定で手動固定可。
 - **アナログ丸ダイヤル（複数指針）は VLM でも誤読しうる**。`confidence`/`notes` に曖昧さが出る。デジタル/積算計（数字表示）が高信頼。
