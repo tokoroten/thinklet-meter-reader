@@ -539,7 +539,7 @@ function save(){
 </div>
 <script>
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
-function ftime(ts){try{return new Date(ts).toLocaleString();}catch(e){return '';}}
+function ftime(ts){try{var d=new Date(ts),p=function(n){return(n<10?'0':'')+n;};return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}catch(e){return '';}}
 function fconf(c){return (c==null)?'':Math.round(c*100)+'%';}
 function tick(){
  document.getElementById('prev').src='/preview.jpg?t='+Date.now();
@@ -607,7 +607,7 @@ function card(r){
  var v=esc(r.valueText||(r.value!=null?r.value:'?')), u=esc(r.unit||'');
  var img=r.hasImage?('<img class=th loading=lazy src="/history.jpg?ts='+r.ts+'">'):'<div class=noimg>画像なし</div>';
  var ok=r.ok?'<span class=ok>OK</span>':'<span class=ng>要確認</span>';
- var t=''; try{t=new Date(r.ts).toLocaleString();}catch(e){}
+ var t=''; try{var _d=new Date(r.ts),_p=function(n){return(n<10?'0':'')+n;};t=_d.getFullYear()+'/'+_p(_d.getMonth()+1)+'/'+_p(_d.getDate())+' '+_p(_d.getHours())+':'+_p(_d.getMinutes())+':'+_p(_d.getSeconds());}catch(e){}
  var ids=(r.codes&&r.codes.length)?('<div class=ids><b>ID:</b> '+r.codes.map(esc).join(', ')+'</div>'):'';
  return '<div class=card>'+img+'<div class=info>'+
    '<div class=v>'+v+' '+u+'</div>'+
