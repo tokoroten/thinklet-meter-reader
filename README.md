@@ -45,7 +45,9 @@ cd path\to\thinklet-meter-reader
 
 同一WiFiなら端末IP（起動ログ `HTTP listening on :8080 -> ...` か、読み取り画面の表示）で `http://<端末IP>:8080/config`。
 
-- **モデル名**は可変（既定 `gpt-5`。実際に使うVision対応モデルID（例 `gpt-5.4-mini` 等）に差し替え可）。
+- **モデル**は**ドロップダウン選択**（既定 `gpt-5`／`gpt-5-mini`／`gpt-5.4`／`gpt-5.4-mini`／`gpt-4o`…）または**「カスタム入力」で自由記述**（任意のVision対応モデルID）。
+- **reasoning 強度**（`reasoning_effort`）を選択可：`指定なし`（モデル既定）/ `minimal` / `low` / `medium` / `high`。指定なしのときはリクエストに付与しない。
+- **エンドポイントは可変**＝**OpenAI互換サーバ**も利用可（`/v1/chat/completions` 互換）。互換先が `reasoning_effort` 非対応なら「指定なし」に。
 - **ヒント**は任意（例: 「水道メータ 単位m3」「黒地に白の積算計、5桁＋小数1桁」）。読み取り精度の補助になる。
 - **カメラ露出**（露光時間µs・ISO）も同じ設定ページで調整可（→ [カメラ露出の調整](#カメラ露出の調整ノイズ低減)）。
 - APIキーは **Android Keystore で暗号化**して保存し、ログ・`/state.json` には**末尾4桁のマスク表示のみ**（→ [APIキーの保存](#apiキーの保存セキュリティ)）。

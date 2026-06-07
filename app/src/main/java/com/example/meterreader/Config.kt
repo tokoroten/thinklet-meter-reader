@@ -35,6 +35,8 @@ class Config(private val appContext: Context) {
         private set
     @Volatile var deviceName: String = "meter"   // mDNS ホスト名 <name>.local。/config で変更可（既定 meter）
         private set
+    @Volatile var reasoningEffort: String = ""    // reasoning_effort（""=指定なし=モデル既定 / minimal / low / medium / high）
+        private set
 
     private val prefs: SharedPreferences? by lazy { createPrefs() }
 
@@ -63,6 +65,7 @@ class Config(private val appContext: Context) {
         hint = p.getString(K_HINT, "") ?: ""
         exposureUs = p.getLong(K_EXP, 0L)
         iso = p.getInt(K_ISO, 0)
+        reasoningEffort = normalizeEffort(p.getString(K_EFFORT, "") ?: "")
         val storedName = p.getString(K_NAME, "") ?: ""
         deviceName = if (storedName.isBlank()) {
             // 既定名は端末固有に一意化（Android の jmDNS は衝突自動回避が不確実なため、最初から重複させない）。
@@ -75,17 +78,22 @@ class Config(private val appContext: Context) {
     }
 
     /** /config の POST から呼ぶ。空文字キーは「未変更」とみなして既存キーを保持する。 */
-    fun update(apiKey: String?, model: String?, endpoint: String?, hint: String?, exposureUs: Long? = null, iso: Int? = null, deviceName: String? = null) {
+    fun update(apiKey: String?, model: String?, endpoint: String?, hint: String?, exposureUs: Long? = null, iso: Int? = null, deviceName: String? = null, reasoningEffort: String? = null) {
         if (!apiKey.isNullOrBlank()) this.apiKey = apiKey.trim()
-        if (!model.isNullOrBlank()) this.model = model.trim()
+        if (!model.isNullOrBlank()) this.model = model.trim()   // モデルは自由記述可（OpenAI互換サーバのモデルIDも可）
         if (!endpoint.isNullOrBlank()) this.endpoint = endpoint.trim()
         if (hint != null) this.hint = hint.trim()   // ヒントは空文字でのクリアを許可
         if (exposureUs != null) this.exposureUs = exposureUs.coerceAtLeast(0L)   // 0=自動
         if (iso != null) this.iso = iso.coerceAtLeast(0)                          // 0=自動
         if (deviceName != null) this.deviceName = sanitizeName(deviceName)        // mDNS名（不正文字は除去, 空は meter）
+        if (reasoningEffort != null) this.reasoningEffort = normalizeEffort(reasoningEffort)   // ""=指定なし
         save()
-        Log.i(TAG, "config updated: model=${this.model} endpoint=${this.endpoint} exp=${this.exposureUs}us iso=${this.iso} name=${this.deviceName} key=${maskedKey()}")
+        Log.i(TAG, "config updated: model=${this.model} endpoint=${this.endpoint} exp=${this.exposureUs}us iso=${this.iso} name=${this.deviceName} effort='${this.reasoningEffort}' key=${maskedKey()}")
     }
+
+    /** reasoning_effort を許容値に正規化（不正は ""＝指定なし）。 */
+    private fun normalizeEffort(s: String): String =
+        s.trim().lowercase().let { if (it in EFFORTS) it else "" }
 
     /** mDNS/DNSラベルとして安全な名前へ正規化（英小文字/数字/ハイフン, 1〜40, 空なら meter）。 */
     private fun sanitizeName(s: String): String {
@@ -100,7 +108,7 @@ class Config(private val appContext: Context) {
             .putString(K_API, apiKey).putString(K_MODEL, model)
             .putString(K_ENDPOINT, endpoint).putString(K_HINT, hint)
             .putLong(K_EXP, exposureUs).putInt(K_ISO, iso)
-            .putString(K_NAME, deviceName)
+            .putString(K_NAME, deviceName).putString(K_EFFORT, reasoningEffort)
             .apply()
     }
 
@@ -137,7 +145,12 @@ class Config(private val appContext: Context) {
         private const val K_EXP = "exposureUs"
         private const val K_ISO = "iso"
         private const val K_NAME = "deviceName"
+        private const val K_EFFORT = "reasoningEffort"
         const val DEFAULT_MODEL = "gpt-5"
         const val DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+        /** reasoning_effort の許容値（"" は指定なし＝モデル既定）。 */
+        val EFFORTS = setOf("minimal", "low", "medium", "high")
+        /** /config のモデル選択肢（先頭に現在値・末尾にカスタムを動的付与）。自由記述も可。 */
+        val MODEL_PRESETS = listOf("gpt-5", "gpt-5-mini", "gpt-5.4", "gpt-5.4-mini", "gpt-4o", "gpt-4o-mini")
     }
 }

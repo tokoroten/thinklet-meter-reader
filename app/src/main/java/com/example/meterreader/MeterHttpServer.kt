@@ -277,11 +277,12 @@ class MeterHttpServer(
                 exposureUs = if (o.has("exposureUs")) o.optLong("exposureUs") else null,
                 iso = if (o.has("iso")) o.optInt("iso") else null,
                 deviceName = if (o.has("deviceName")) o.optString("deviceName") else null,
+                reasoningEffort = if (o.has("reasoningEffort")) o.optString("reasoningEffort") else null,
             )
             onConfigChanged?.invoke()
             writeText(out, 200, "application/json; charset=utf-8",
                 JSONObject().put("ok", true).put("model", config.model).put("key", config.maskedKey())
-                    .put("deviceName", config.deviceName).toString())
+                    .put("deviceName", config.deviceName).put("reasoningEffort", config.reasoningEffort).toString())
         } catch (e: Exception) {
             Log.w(TAG, "config post failed", e)
             writeText(out, 400, "application/json; charset=utf-8", "{\"ok\":false}")
@@ -302,7 +303,7 @@ class MeterHttpServer(
         o.put("hasShot", latest?.hasImage == true)
         o.put("config", JSONObject()
             .put("model", config.model).put("endpoint", config.endpoint).put("hint", config.hint)
-            .put("mdns", mdnsName).put("port", port)
+            .put("mdns", mdnsName).put("port", port).put("reasoningEffort", config.reasoningEffort)
             .put("keySet", config.hasKey()).put("keyMasked", config.maskedKey()))
         val arr = JSONArray()
         for (i in records.indices.reversed()) arr.put(recJson(records[i], includeRaw = false))   // 新しい順
@@ -399,6 +400,26 @@ class MeterHttpServer(
     private fun camCapsHint(): String =
         if (capExpHiUs > 0) "<br>有効範囲: 露光 ${capExpLoUs}〜${capExpHiUs} µs / ISO ${capIsoMin}〜${capIsoMax}" else ""
 
+    /** モデル選択の <option> 群（現在値を先頭＋既定プリセット＋カスタム）。 */
+    private fun modelOptionsHtml(): String {
+        val models = (listOf(config.model) + Config.MODEL_PRESETS).filter { it.isNotBlank() }.distinct()
+        val opts = models.joinToString("") { m ->
+            "<option value=\"${esc(m)}\"${if (m == config.model) " selected" else ""}>${esc(m)}</option>"
+        }
+        return opts + "<option value=\"__custom__\">カスタム入力…</option>"
+    }
+
+    /** reasoning_effort 選択の <option> 群。 */
+    private fun effortOptionsHtml(): String {
+        val items = listOf(
+            "" to "（指定なし＝モデル既定）", "minimal" to "minimal（最速・最安）",
+            "low" to "low", "medium" to "medium", "high" to "high（最も丁寧）",
+        )
+        return items.joinToString("") { (v, l) ->
+            "<option value=\"$v\"${if (v == config.reasoningEffort) " selected" else ""}>${esc(l)}</option>"
+        }
+    }
+
     private fun configHtml(): String {
         return """
 <!doctype html><html lang="ja"><head><meta charset="utf-8">
@@ -421,9 +442,12 @@ class MeterHttpServer(
  <div class="row">現在: モデル <b>${esc(config.model)}</b> / APIキー <b>${esc(config.maskedKey())}</b></div>
  <label>OpenAI APIキー（空のままなら変更しません）</label>
  <input id="apiKey" type="password" placeholder="sk-...">
- <label>モデル名</label>
- <input id="model" type="text" value="${esc(config.model)}">
- <label>エンドポイント</label>
+ <label>モデル（選択、または「カスタム入力…」で自由記述）</label>
+ <select id="modelSel" onchange="onModelSel()">${modelOptionsHtml()}</select>
+ <input id="modelCustom" type="text" placeholder="カスタムモデルID（OpenAI互換サーバのIDも可）" style="display:none;margin-top:6px">
+ <label>reasoning 強度（推論の強さ。指定なし＝モデル既定。OpenAI互換で未対応なら指定なし）</label>
+ <select id="reasoningEffort">${effortOptionsHtml()}</select>
+ <label>エンドポイント（OpenAI互換サーバも可）</label>
  <input id="endpoint" type="text" value="${esc(config.endpoint)}">
  <label>読み取りヒント（任意。例: 水道メータ 単位m3 / 黒地に白数字の積算計）</label>
  <textarea id="hint" rows="2">${esc(config.hint)}</textarea>
@@ -443,11 +467,14 @@ class MeterHttpServer(
  <div class="row" style="margin-top:18px"><a href="/">← 読み取り画面</a> ・ <a href="/history">履歴</a></div>
 </div>
 <script>
+function onModelSel(){document.getElementById('modelCustom').style.display=(document.getElementById('modelSel').value=='__custom__')?'block':'none';}
+function currentModel(){var s=document.getElementById('modelSel').value;return s=='__custom__'?document.getElementById('modelCustom').value.trim():s;}
 function save(){
  var b={apiKey:document.getElementById('apiKey').value,
-        model:document.getElementById('model').value,
+        model:currentModel(),
         endpoint:document.getElementById('endpoint').value,
         hint:document.getElementById('hint').value,
+        reasoningEffort:document.getElementById('reasoningEffort').value,
         exposureUs:parseInt(document.getElementById('exposureUs').value||'0',10),
         iso:parseInt(document.getElementById('iso').value||'0',10),
         deviceName:document.getElementById('deviceName').value};

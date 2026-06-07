@@ -107,12 +107,14 @@ class OpenAiClient(private val config: Config) {
             .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
             .put(JSONObject().put("role", "user").put("content", content))
 
-        return JSONObject()
+        val req = JSONObject()
             .put("model", config.model)
             .put("messages", messages)
             .put("response_format", JSONObject(RESPONSE_FORMAT_JSON))
             .put("max_completion_tokens", 800)
-            .toString()
+        // reasoning_effort は指定がある時だけ付与（未対応モデル/OpenAI互換サーバでも安全）
+        if (config.reasoningEffort.isNotBlank()) req.put("reasoning_effort", config.reasoningEffort)
+        return req.toString()
     }
 
     private fun parseResponse(resp: String): Result {
