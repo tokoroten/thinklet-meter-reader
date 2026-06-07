@@ -1,6 +1,7 @@
 package com.example.meterreader
 
 import android.util.Log
+import androidx.exifinterface.media.ExifInterface
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -48,6 +49,8 @@ class MeterHttpServer(
         val meterType: String, val displayType: String, val confidence: Double,
         val ok: Boolean, val notes: String, val source: String, val raw: String,
         val hasImage: Boolean, val codes: List<String>,   // 検出した顧客ID/メーターID（バーコード/QR）
+        // 撮影時の GPS（無ければ全て null）。lat/lon=度, acc=水平精度(m), locTs=測位時刻(epoch ms)
+        val lat: Double? = null, val lon: Double? = null, val acc: Double? = null, val locTs: Long? = null,
     )
 
     private val records = CopyOnWriteArrayList<Rec>()
@@ -105,6 +108,10 @@ class MeterHttpServer(
                             raw = o.optString("raw"),
                             hasImage = File(historyDir, "$ts.jpg").exists(),
                             codes = o.optJSONArray("codes")?.let { a -> List(a.length()) { a.optString(it) } } ?: emptyList(),
+                            lat = if (o.has("lat") && !o.isNull("lat")) o.optDouble("lat") else null,
+                            lon = if (o.has("lon") && !o.isNull("lon")) o.optDouble("lon") else null,
+                            acc = if (o.has("acc") && !o.isNull("acc")) o.optDouble("acc") else null,
+                            locTs = if (o.has("locTs") && !o.isNull("locTs")) o.optLong("locTs") else null,
                         )
                     )
                 }
@@ -116,19 +123,37 @@ class MeterHttpServer(
         }.onFailure { Log.w(TAG, "history load failed", it) }
     }
 
-    /** 1回の読み取り（撮影/デバッグ問わず）ごとに、画像をディスク保存＋メタを永続化して1件追加。 */
-    fun publish(r: OpenAiClient.MeterReading, jpeg: ByteArray?, ts: Long, source: String, codes: List<String> = emptyList()) {
+    /** 1回の読み取り（撮影/デバッグ問わず）ごとに、画像をディスク保存＋メタを永続化して1件追加。
+     *  lat/lon/acc/locTs は撮影時の GPS（無ければ null）。座標があれば保存JPEGに EXIF GPS も埋め込む。 */
+    fun publish(
+        r: OpenAiClient.MeterReading, jpeg: ByteArray?, ts: Long, source: String, codes: List<String> = emptyList(),
+        lat: Double? = null, lon: Double? = null, acc: Double? = null, locTs: Long? = null,
+    ) {
         var hasImage = false
         if (jpeg != null) {
-            hasImage = runCatching { File(historyDir, "$ts.jpg").apply { writeBytes(jpeg) }; true }
+            val f = File(historyDir, "$ts.jpg")
+            hasImage = runCatching { f.writeBytes(jpeg); true }
                 .getOrElse { Log.w(TAG, "image save failed", it); false }
+            if (hasImage && lat != null && lon != null) writeExifGps(f, lat, lon, locTs)
         }
         val rec = Rec(ts, r.valueText, r.value, r.unit, r.meterType, r.displayType,
-            r.confidence, r.readingOk, r.notes, source, r.rawJson, hasImage, codes)
+            r.confidence, r.readingOk, r.notes, source, r.rawJson, hasImage, codes, lat, lon, acc, locTs)
         records.add(rec)
         latest = rec
         prune()
         persist()
+    }
+
+    /** 保存済みJPEGに GPS の EXIF を書き込む（画像ファイル単体でも位置が分かるように）。失敗は無視。 */
+    private fun writeExifGps(file: File, lat: Double, lon: Double, locTs: Long?) {
+        runCatching {
+            val exif = ExifInterface(file.absolutePath)
+            exif.setLatLong(lat, lon)
+            if (locTs != null) exif.setAttribute(
+                ExifInterface.TAG_GPS_DATESTAMP,
+                SimpleDateFormat("yyyy:MM:dd", Locale.US).format(Date(locTs)))
+            exif.saveAttributes()
+        }.onFailure { Log.w(TAG, "exif gps write failed: ${it.message}") }
     }
 
     /** 照準合わせ用に最新の解析フレームを差し込む（撮影とは無関係に常時更新, メモリのみ）。 */
@@ -328,18 +353,22 @@ class MeterHttpServer(
             .put("confidence", r.confidence).put("ok", r.ok).put("notes", r.notes)
             .put("source", r.source).put("hasImage", r.hasImage)
             .put("codes", JSONArray(r.codes))
+            .put("lat", r.lat ?: JSONObject.NULL).put("lon", r.lon ?: JSONObject.NULL)
+            .put("acc", r.acc ?: JSONObject.NULL).put("locTs", r.locTs ?: JSONObject.NULL)
         if (includeRaw) j.put("raw", r.raw)
         return j
     }
 
     private fun recordsCsv(): String {
-        val sb = StringBuilder("ts,datetime,value_text,value,unit,meter_type,display_type,confidence,ok,notes,source,codes\n")
+        val sb = StringBuilder("ts,datetime,value_text,value,unit,meter_type,display_type,confidence,ok,notes,source,codes,lat,lon,accuracy_m\n")
         for (r in records) {
             sb.append(r.ts).append(',').append(csv(fmtTs(r.ts))).append(',')
               .append(csv(r.valueText)).append(',').append(r.value?.toString() ?: "").append(',')
               .append(csv(r.unit ?: "")).append(',').append(csv(r.meterType)).append(',').append(csv(r.displayType)).append(',')
               .append(r.confidence).append(',').append(r.ok).append(',').append(csv(r.notes)).append(',').append(csv(r.source)).append(',')
-              .append(csv(r.codes.joinToString(" | "))).append('\n')
+              .append(csv(r.codes.joinToString(" | "))).append(',')
+              .append(r.lat?.toString() ?: "").append(',').append(r.lon?.toString() ?: "").append(',')
+              .append(r.acc?.let { Math.round(it).toString() } ?: "").append('\n')
         }
         return sb.toString()
     }
@@ -533,7 +562,7 @@ function save(){
    <div class="val" id="val">&mdash;</div><div class="meta" id="vmeta"></div></div>
  <div class="card log"><div class="h">直近の読み取り <span class="meta" id="hcnt"></span>
    <a class="btn" href="/history" style="float:right">すべての履歴 →</a></div>
-   <table><thead><tr><th>#</th><th>日時</th><th>value</th><th>unit</th><th>type</th><th>conf</th></tr></thead>
+   <table><thead><tr><th>#</th><th>日時</th><th>value</th><th>unit</th><th>type</th><th>conf</th><th>位置</th></tr></thead>
    <tbody id="rows"></tbody></table>
    <div class="empty" id="empty">まだ読み取りがありません（端末の音量Downで撮影）</div></div>
 </div>
@@ -541,6 +570,8 @@ function save(){
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
 function ftime(ts){try{var d=new Date(ts),p=function(n){return(n<10?'0':'')+n;};return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}catch(e){return '';}}
 function fconf(c){return (c==null)?'':Math.round(c*100)+'%';}
+function fmap(r){return (r&&r.lat!=null&&r.lon!=null)?('<a href="https://maps.google.com/?q='+r.lat+','+r.lon+'" target=_blank title="精度 ±'+(r.acc!=null?Math.round(r.acc)+'m':'?')+'">📍</a>'):'';}
+function fgeo(r){return (r&&r.lat!=null&&r.lon!=null)?('📍 '+r.lat.toFixed(6)+', '+r.lon.toFixed(6)+(r.acc!=null?(' ±'+Math.round(r.acc)+'m'):'')):'';}
 function tick(){
  document.getElementById('prev').src='/preview.jpg?t='+Date.now();
  fetch('/state.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
@@ -548,7 +579,8 @@ function tick(){
   document.getElementById('shot').src='/shot.jpg?t='+(l?l.ts:0);
   document.getElementById('val').innerHTML=l?(esc(l.valueText||(l.value!=null?l.value:'?'))+' '+esc(l.unit||'')):'—';
   var ids=(l&&l.codes&&l.codes.length)?('  /  ID: '+l.codes.map(esc).join(', ')):'';
-  document.getElementById('vmeta').innerHTML=l?((l.ok?'<span class=ok>OK</span>':'<span class=ng>要確認</span>')+'  /  '+esc(l.meterType)+'/'+esc(l.displayType)+'  /  '+fconf(l.confidence)+ids+'  /  '+ftime(l.ts)+(l.notes?('  /  '+esc(l.notes)):'')):'';
+  var geo=(l&&l.lat!=null)?('  /  '+fgeo(l)):'';
+  document.getElementById('vmeta').innerHTML=l?((l.ok?'<span class=ok>OK</span>':'<span class=ng>要確認</span>')+'  /  '+esc(l.meterType)+'/'+esc(l.displayType)+'  /  '+fconf(l.confidence)+ids+'  /  '+ftime(l.ts)+geo+(l.notes?('  /  '+esc(l.notes)):'')):'';
   var cf=s.config||{};
   document.getElementById('cfg').textContent='model: '+(cf.model||'')+' / key: '+(cf.keyMasked||'')+(cf.mdns?(' / '+cf.mdns+((cf.port&&cf.port!=80)?(':'+cf.port):'')):'');
   document.getElementById('keywarn').style.display=cf.keySet?'none':'block';
@@ -558,7 +590,7 @@ function tick(){
   document.getElementById('hcnt').textContent='('+(s.count||0)+')';
   var hh='';
   for(var j=0;j<rows.length;j++){var r=rows[j];
-   hh+='<tr><td>'+((s.count||0)-j)+'</td><td>'+ftime(r.ts)+'</td><td><b>'+esc(r.valueText||(r.value!=null?r.value:''))+'</b></td><td>'+esc(r.unit||'')+'</td><td>'+esc(r.meterType)+'</td><td>'+fconf(r.confidence)+(r.ok?'':' <span class=ng>!</span>')+'</td></tr>';}
+   hh+='<tr><td>'+((s.count||0)-j)+'</td><td>'+ftime(r.ts)+'</td><td><b>'+esc(r.valueText||(r.value!=null?r.value:''))+'</b></td><td>'+esc(r.unit||'')+'</td><td>'+esc(r.meterType)+'</td><td>'+fconf(r.confidence)+(r.ok?'':' <span class=ng>!</span>')+'</td><td>'+fmap(r)+'</td></tr>';}
   document.getElementById('rows').innerHTML=hh;
  }).catch(function(){}).then(function(){setTimeout(tick,700);});
 }
@@ -590,6 +622,7 @@ tick();
  .conf{color:#9aa;font-size:13px}
  .ids{margin:4px 0;font-size:14px;color:#ddd}.ids b{color:#fbbf24}
  .time{color:#9aa;font-size:13px;margin-bottom:6px}
+ .geo{color:#9aa;font-size:13px;margin-bottom:6px}.geo a{color:#6ab7ff}
  .notes{color:#ddd;font-size:14px;margin:6px 0;white-space:pre-wrap}
  details{margin-top:6px}summary{color:#6ab7ff;cursor:pointer;font-size:13px}
  pre{white-space:pre-wrap;word-break:break-all;background:#000;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;color:#9fe0a0}
@@ -616,6 +649,7 @@ function card(r){
      ' <span class=tag>'+esc(r.source)+'</span></div>'+
    ids+
    '<div class=time>'+t+'</div>'+
+   ((r.lat!=null&&r.lon!=null)?('<div class=geo>📍 <a href="https://maps.google.com/?q='+r.lat+','+r.lon+'" target=_blank>'+r.lat.toFixed(6)+', '+r.lon.toFixed(6)+'</a>'+(r.acc!=null?(' ±'+Math.round(r.acc)+'m'):'')+'</div>'):'')+
    (r.notes?'<div class=notes>'+esc(r.notes)+'</div>':'')+
    (r.raw?'<details><summary>認識結果(生JSON)</summary><pre>'+esc(r.raw)+'</pre></details>':'')+
    '</div></div>';

@@ -20,6 +20,7 @@ import android.graphics.Rect
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.location.Location
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -45,6 +46,7 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.example.meterreader.geo.LocationTracker
 import com.example.meterreader.mdns.MdnsAdvertiser
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -126,6 +128,9 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // 撮影時の GPS 記録（GMS非依存の素のLocationManager）。巡回点検で「どこで撮ったか」を残す
+    private val location by lazy { LocationTracker(applicationContext, logTag = TAG) }
+
     // オフラインキュー：WiFi未接続/通信失敗時に撮影画像をためて、接続時に自動で再認識する
     private val queueDir by lazy { File(filesDir, "queue") }
     private val connManager by lazy { getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
@@ -181,16 +186,29 @@ class MainActivity : AppCompatActivity() {
         mdns.start()   // mDNS 登録（<deviceName>.local）
         httpServer.onConfigChanged = { mdns.reregister() }   // /config でデバイス名変更→mDNS再登録
 
+        val needLoc = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1)
+            val req = if (needLoc) arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION)
+                      else arrayOf(Manifest.permission.CAMERA)
+            ActivityCompat.requestPermissions(this, req, 1)
             ui("CAMERA権限待ち（install -g 推奨）"); return
         }
+        if (needLoc) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 2)
+        else location.start()   // 既に許可済みなら即購読開始（未許可時は付与コールバックで開始）
         startCamera()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startCamera()
+        var camGranted = false
+        for (i in permissions.indices) {
+            if (grantResults.getOrNull(i) != PackageManager.PERMISSION_GRANTED) continue
+            when (permissions[i]) {
+                Manifest.permission.CAMERA -> camGranted = true
+                Manifest.permission.ACCESS_FINE_LOCATION -> location.start()
+            }
+        }
+        if (camGranted) startCamera()
     }
 
     // タッチの無い端末向け：音量Down=撮影 / 音量Up=（1回）直前値の再読み上げ・（2回以上）アクセス先URL読み上げ。
@@ -358,9 +376,10 @@ class MainActivity : AppCompatActivity() {
                 if (hits.isNotEmpty()) runOnUiThread { shotView.setImageBitmap(shotShown) }
                 Log.i(TAG, "reading: source=$source jpeg=${jpeg.size}B model=${config.model} codes=${codes.size}")
                 val ts = System.currentTimeMillis()
+                val loc = location.current()   // 撮影時の GPS スナップショット（無ければ null）
                 // オフラインなら OpenAI を呼ばずキューへ（接続復帰時に自動再認識）
                 if (!isOnline()) {
-                    enqueue(jpeg, ts, source)
+                    enqueue(jpeg, ts, source, loc)
                     runOnUiThread { ui("オフラインのためキューに保存（接続時に自動認識）") }
                     announce("オフラインです。接続したら自動で読み取ります")
                     return@execute
@@ -371,7 +390,8 @@ class MainActivity : AppCompatActivity() {
                         val r = res.reading
                         lastReading = r
                         val thumb = jpegBytes(scaleToEdge(shotShown, HISTORY_EDGE), 80)   // 履歴サムネ（枠付き）
-                        httpServer.publish(r, thumb, ts, source, codes)
+                        httpServer.publish(r, thumb, ts, source, codes,
+                            loc?.latitude, loc?.longitude, loc?.accuracy?.toDouble(), loc?.time)
                         Log.i(TAG, "RESULT ${r.rawJson}")
                         val idLine = if (codes.isNotEmpty()) "\nID: " + codes.joinToString(", ") else ""
                         runOnUiThread { ui(formatForScreen(r) + idLine) }
@@ -379,7 +399,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     is OpenAiClient.Result.Err -> {
                         if (res.retryable) {   // 通信系の一時障害 → キューへ
-                            enqueue(jpeg, ts, source)
+                            enqueue(jpeg, ts, source, loc)
                             runOnUiThread { ui("通信できないためキューに保存（接続時に自動認識）: ${res.message}") }
                             announce("通信できません。接続したら自動で読み取ります")
                         } else {
@@ -630,13 +650,17 @@ class MainActivity : AppCompatActivity() {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    /** 撮影画像（OpenAI送信用のクリーンJPEG）をキューに保存。接続時に processQueue で再認識する。 */
-    private fun enqueue(jpeg: ByteArray, ts: Long, source: String) {
+    /** 撮影画像（OpenAI送信用のクリーンJPEG）をキューに保存。接続時に processQueue で再認識する。
+     *  撮影時のGPSも一緒に保存し、後で再認識しても元の撮影位置が履歴に残るようにする。 */
+    private fun enqueue(jpeg: ByteArray, ts: Long, source: String, loc: Location? = null) {
         runCatching {
             queueDir.mkdirs()
             File(queueDir, "$ts.jpg").writeBytes(jpeg)
-            File(queueDir, QUEUE_JSONL).appendText(org.json.JSONObject().put("ts", ts).put("source", source).toString() + "\n")
-            Log.i(TAG, "queued offline capture ts=$ts source=$source")
+            val o = org.json.JSONObject().put("ts", ts).put("source", source)
+            if (loc != null) o.put("lat", loc.latitude).put("lon", loc.longitude)
+                .put("acc", loc.accuracy.toDouble()).put("locTs", loc.time)
+            File(queueDir, QUEUE_JSONL).appendText(o.toString() + "\n")
+            Log.i(TAG, "queued offline capture ts=$ts source=$source loc=${loc != null}")
         }.onFailure { Log.w(TAG, "enqueue failed", it) }
         httpServer.setQueued(queueCount())
     }
@@ -652,19 +676,20 @@ class MainActivity : AppCompatActivity() {
         if (!f.exists()) return
         val items = runCatching {
             f.readLines().filter { it.isNotBlank() }.map { org.json.JSONObject(it) }
-                .map { it.getLong("ts") to it.optString("source", "queued") }
         }.getOrElse { emptyList() }
         if (items.isEmpty()) { runCatching { f.delete() }; httpServer.setQueued(0); return }
 
         processingQueue = true
         try {
             announce("保留中の${items.size}件を読み取ります")
-            val keep = ArrayList<Pair<Long, String>>()
+            val keep = ArrayList<org.json.JSONObject>()
             var i = 0
             var ok = 0
             while (i < items.size) {
-                val (ts, source) = items[i]
-                if (!isOnline()) { keep.add(items[i]); i++; continue }
+                val o = items[i]
+                val ts = o.getLong("ts")
+                val source = o.optString("source", "queued")
+                if (!isOnline()) { keep.add(o); i++; continue }
                 val img = File(queueDir, "$ts.jpg")
                 val bytes = runCatching { img.readBytes() }.getOrNull()
                 if (bytes == null) { i++; continue }   // 画像欠落は破棄
@@ -675,7 +700,11 @@ class MainActivity : AppCompatActivity() {
                     is OpenAiClient.Result.Ok -> {
                         val thumbSrc = if (bmp != null && hits.isNotEmpty()) drawCodeBoxes(bmp, hits, 1f) else bmp
                         val thumb = if (thumbSrc != null) jpegBytes(scaleToEdge(thumbSrc, HISTORY_EDGE), 80) else bytes
-                        httpServer.publish(res.reading, thumb, ts, "$source+queued", codes)
+                        httpServer.publish(res.reading, thumb, ts, "$source+queued", codes,
+                            if (o.has("lat") && !o.isNull("lat")) o.optDouble("lat") else null,
+                            if (o.has("lon") && !o.isNull("lon")) o.optDouble("lon") else null,
+                            if (o.has("acc") && !o.isNull("acc")) o.optDouble("acc") else null,
+                            if (o.has("locTs") && !o.isNull("locTs")) o.optLong("locTs") else null)
                         lastReading = res.reading
                         runCatching { img.delete() }
                         ok++; i++
@@ -688,7 +717,7 @@ class MainActivity : AppCompatActivity() {
             }
             // 残りで queue.jsonl を書き直し（無ければ削除）
             if (keep.isEmpty()) runCatching { f.delete() }
-            else runCatching { f.writeText(keep.joinToString("") { (ts, s) -> org.json.JSONObject().put("ts", ts).put("source", s).toString() + "\n" }) }
+            else runCatching { f.writeText(keep.joinToString("") { it.toString() + "\n" }) }
             httpServer.setQueued(keep.size)
             if (ok > 0) announce("${ok}件を読み取りました")
             Log.i(TAG, "queue processed: ok=$ok remaining=${keep.size}")
@@ -701,6 +730,7 @@ class MainActivity : AppCompatActivity() {
         runCatching { unregisterReceiver(debugReceiver) }
         runCatching { mainHandler.removeCallbacks(upTapFinalize) }
         runCatching { connManager.unregisterNetworkCallback(netCallback) }
+        runCatching { location.stop() }
         runCatching { mdns.stop() }
         httpServer.stop(); tts?.stop(); tts?.shutdown()
         runCatching { barcodeScanner.close() }

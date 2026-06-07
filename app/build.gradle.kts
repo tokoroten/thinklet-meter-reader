@@ -40,6 +40,9 @@ dependencies {
     // APIキーの暗号化保存（Android Keystore 由来のマスターキーで EncryptedSharedPreferences）
     implementation("androidx.security:security-crypto:1.0.0")
 
+    // 保存JPEGへの GPS EXIF 書き込み（framework版に setLatLong が無いため公式の androidx 版を使用）
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+
     // バーコード/QR 検出（端末内バンドル版＝GMS非依存）。顧客ID・メーターIDの読み取りに使用
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
 

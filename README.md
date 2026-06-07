@@ -133,6 +133,16 @@ system プロンプトに**読み取り規則**（計測レジスタのみ読む
 - 履歴に `codes`（ID）として読み値とペアで保存（`/records.json`・CSV `codes` 列・`/history`・ライブ画面に表示）。
 - **検出領域を撮影画像に可視化**：黄枠＋IDラベルを描画した画像を画面と履歴サムネに表示（OpenAIへ送る画像はクリーンなまま）。`/history.jpg?ts=` で確認可。
 
+## 位置情報（GPS）
+
+巡回点検で「**どこで撮ったか**」を残すため、撮影ごとに端末GPSの座標を記録する（例: 巡回中に異物を見つけて撮影 → 位置つきで履歴に残る）。
+
+- **GMS非依存**：素の `LocationManager`（`GPS_PROVIDER`＋`NETWORK_PROVIDER`）で最新測位を保持し、撮影時にスナップショット。実装は流用可能な [`geo/LocationTracker`](app/src/main/java/com/example/meterreader/geo/LocationTracker.kt)。THINKLET LC01 はGPS対応（実機確認済み）。
+- 記録内容：**緯度・経度・水平精度(m)・測位時刻**。`/records.json`・CSV（`lat,lon,accuracy_m` 列）・ライブ画面（`📍` 地図リンク）・`/history`（座標＋精度＋地図リンク）に表示。
+- **保存JPEGに EXIF GPS を埋め込み**：画像ファイル単体でも位置が分かる（座標が取れたときのみ）。
+- **オフラインキューでも保持**：未接続時に撮った写真は、撮影時の座標も一緒にキューへ。接続復帰後の再認識でも元の撮影位置が残る。
+- 権限 `ACCESS_FINE_LOCATION` が必要（`install -g` で付与）。**屋内など測位できない場面では座標は空**（精度・鮮度も併記されるので古い測位は判別可能）。
+
 ## カメラ露出の調整（ノイズ低減）
 
 既定は自動（ブレ抑制のため上限露光を固定して明るさ適応）。ノイズが気になる場合は設定ページで
@@ -183,8 +193,8 @@ WiFi/LTE 未接続時は OpenAI を呼ばず、撮影画像を**キューに保�
 
 - 端末: THINKLET LC01（Android 8.1 / API 27, arm64-v8a, GMSなし, 広角カメラ）
 - ツールチェイン: AGP 8.10 / Kotlin 2.1 / compileSdk 36 / minSdk 27 / Gradle 8.13 / JDK 17(JBR)
-- 依存: CameraX / **ML Kit barcode-scanning**（端末内バンドル＝GMS非依存, ID読取）/ **androidx.security-crypto**（キー暗号化）/ **jmDNS**（mDNS, 純Java）。ネットは `HttpURLConnection`、JSONは `org.json`＝**追加ネットライブラリなし**。OpenCVは不使用。APKは約16MB（大半はML Kitバーコードモデル）。
-- 権限: `CAMERA` / `INTERNET` / `ACCESS_NETWORK_STATE`（接続判定）/ `CHANGE_WIFI_MULTICAST_STATE`（mDNS）/ `WAKE_LOCK`（mDNS応答安定化のWifiLock）/ `READ_EXTERNAL_STORAGE`（debug の任意パス画像読込, maxSdk32）。
+- 依存: CameraX / **ML Kit barcode-scanning**（端末内バンドル＝GMS非依存, ID読取）/ **androidx.security-crypto**（キー暗号化）/ **androidx.exifinterface**（保存JPEGへのGPS EXIF）/ **jmDNS**（mDNS, 純Java）。位置情報は素の `LocationManager`（GMS非依存）。ネットは `HttpURLConnection`、JSONは `org.json`＝**追加ネットライブラリなし**。OpenCVは不使用。APKは約16MB（大半はML Kitバーコードモデル）。
+- 権限: `CAMERA` / `INTERNET` / `ACCESS_NETWORK_STATE`（接続判定）/ `CHANGE_WIFI_MULTICAST_STATE`（mDNS）/ `WAKE_LOCK`（mDNS応答安定化のWifiLock）/ `ACCESS_FINE_LOCATION`（撮影時のGPS記録）/ `READ_EXTERNAL_STORAGE`（debug の任意パス画像読込, maxSdk32）。
 - TTS: Fairy **Josee**（`ai.fd.josee.app.tts`, オフライン日英）。未導入時は無音で動作継続（導入は [FairyDevicesRD/droid.josee.tts](https://github.com/FairyDevicesRD/droid.josee.tts) 参照）。
 - カメラは ImageAnalysis のみbind（連続フレームをプレビュー＋撮影元に使用）。露出は自動（ブレ抑制の上限露光固定）／設定で手動固定可。
 - **アナログ丸ダイヤル（複数指針）は VLM でも誤読しうる**。`confidence`/`notes` に曖昧さが出る。デジタル/積算計（数字表示）が高信頼。
