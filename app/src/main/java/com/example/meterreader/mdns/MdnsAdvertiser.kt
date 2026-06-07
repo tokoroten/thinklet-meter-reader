@@ -8,6 +8,8 @@ import java.net.InetAddress
 import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceInfo
 
@@ -52,25 +54,34 @@ class MdnsAdvertiser(
     private val serviceName: () -> String = { hostLabel() },
     private val txt: Map<String, String> = emptyMap(),
     private val logTag: String = "MdnsAdvertiser",
+    private val reannounceSec: Long = 100,   // 定期再告知の間隔(秒)。0で無効。AndroidのmDNSは応答が不安定なため、
+                                             // TTL(約120s)切れ前に再告知してクライアントのキャッシュを温め続ける
     private val onRegistered: (String) -> Unit = {},
 ) {
     private val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var lock: WifiManager.MulticastLock? = null
     @Volatile private var jmdns: JmDNS? = null
     private val exec = Executors.newSingleThreadExecutor()
+    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
 
     /** 確定ホスト名 `"<label>.local"`（衝突時は `-2` 付き）。未登録時は空文字。 */
     @Volatile var committedName: String = ""
         private set
 
-    /** 広告を開始（site-local IPv4 取得 → jmDNS 登録）。 */
-    fun start() { exec.execute { register() } }
+    /** 広告を開始（site-local IPv4 取得 → jmDNS 登録）＋定期再告知のスケジュール。 */
+    fun start() {
+        exec.execute { register() }
+        if (reannounceSec > 0) {
+            scheduler.scheduleWithFixedDelay({ exec.execute { register() } }, reannounceSec, reannounceSec, TimeUnit.SECONDS)
+        }
+    }
 
     /** ネットワーク変更・ホスト名変更時に呼ぶ（作り直して再登録）。 */
     fun reregister() { exec.execute { register() } }
 
     /** 広告を停止し、MulticastLock/スレッドを解放する。 */
     fun stop() {
+        runCatching { scheduler.shutdownNow() }
         exec.execute { teardown(); runCatching { lock?.release() }; lock = null }
         exec.shutdown()
     }
@@ -91,9 +102,11 @@ class MdnsAdvertiser(
                 ServiceInfo.create(serviceType, serviceName(), port, 0, 0, txt)
             j.registerService(info)
             jmdns = j
-            committedName = j.hostName.removeSuffix(".")
-            Log.i(logTag, "mDNS registered: http://$committedName:$port (addr=${addr.hostAddress})")
-            onRegistered(committedName)
+            val name = j.hostName.removeSuffix(".")
+            val changed = name != committedName
+            committedName = name
+            Log.i(logTag, "mDNS ${if (changed) "registered" else "re-announced"}: http://$name:$port (addr=${addr.hostAddress})")
+            if (changed) onRegistered(name)   // 名前が変わった時だけ通知（定期再告知でUIを乱さない）
         } catch (e: Exception) {
             Log.w(logTag, "mDNS register failed", e)
         }
